@@ -1,0 +1,69 @@
+"""
+Person model – represents a named individual detected across photos.
+"""
+
+from database.db import db
+from datetime import datetime, timezone
+
+
+class Person(db.Model):
+    """A recognised person whose face appears in one or more photos."""
+
+    __tablename__ = 'persons'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    initials = db.Column(db.String(5), nullable=False)
+    emoji = db.Column(db.String(10), default='👤')
+    color = db.Column(db.String(20), default='#1a73e8')
+    bg = db.Column(db.String(20), default='#e8f0fe')
+    tags = db.Column(db.JSON, default=list)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    faces = db.relationship('Face', backref='person', lazy=True)
+
+    @property
+    def photo_count(self):
+        """Return the number of *unique* photos this person appears in."""
+        unique_photos = set(f.photo_id for f in self.faces)
+        return len(unique_photos)
+
+    def to_dict(self):
+        """Return a JSON-serialisable dictionary for the frontend people panel."""
+        import os
+        from utils.storage_helpers import get_backend_url
+        base_url = get_backend_url()
+        photo_url = None
+        if self.faces:
+            # Look for a face in a solo photo (photo with only 1 face detected)
+            solo_face = None
+            for f in self.faces:
+                if f.photo and len(f.photo.faces) == 1:
+                    solo_face = f
+                    break
+            
+            if solo_face:
+                # Use cropped face URL of that specific single individual's face
+                photo_url = f"{base_url}/api/faces/crop/{solo_face.id}"
+            else:
+                # Fallback to the full group photo of the first face
+                first_face = self.faces[0]
+                if first_face.photo:
+                    if first_face.photo.file_path and first_face.photo.file_path.startswith(('http://', 'https://')):
+                        photo_url = first_face.photo.file_path
+                    else:
+                        photo_url = f"{base_url}/api/photos/file/{os.path.basename(first_face.photo.file_path)}"
+
+        return {
+            'id': self.id,
+            'name': self.name,
+            'initials': self.initials,
+            'emoji': self.emoji,
+            'color': self.color,
+            'bg': self.bg,
+            'tags': self.tags or [],
+            'photoCount': self.photo_count,
+            'photo_url': photo_url,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
